@@ -1,0 +1,133 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path"
+	"time"
+	"log"
+	"strconv"
+	"strings"
+	"github.com/rwcarlsen/goexif/exif"
+)
+
+func main() {
+	for _, filepath := range os.Args[1:] {
+		archiveFolder := os.ExpandEnv("$HOME/Photos")
+		filename := path.Base(filepath)
+
+		date, err := getDate(filepath)
+		if err != nil { log.Fatal(err) }
+
+		lat, long, err := getLatLong(filepath)
+		if err != nil { log.Fatal(err) }
+
+		finalPath := newPath(archiveFolder, filename, date, lat, long)
+		fmt.Println("final path:", finalPath)
+	}
+}
+
+func findNameTags(filename string) string {
+	// TODO: Corrigir pra não pegar extensão
+	tags := strings.Split(filename, "--")[1]
+	dirtyTags := strings.Split(tags, " ")
+	cleanTags := make([]string, 0)
+
+	for _, value := range dirtyTags {
+		if value != "" {
+			cleanTags = append(cleanTags, strings.Trim(value, " "))
+		}
+	}
+
+	return strings.Join(cleanTags, " ")
+}
+
+func getDate(filepath string) (time.Time, error) {
+	file, err := os.Open(filepath)
+	if err != nil { log.Fatal(err) }
+
+	data, err := exif.Decode(file)
+	if err != nil { log.Fatal(err) }
+
+	return data.DateTime()
+}
+
+func getLatLong(filepath string) (float64, float64, error) {
+	file, err := os.Open(filepath)
+	if err != nil { log.Fatal(err) }
+
+	data, err := exif.Decode(file)
+	if err != nil { log.Fatal(err) }
+
+	return data.LatLong()
+}
+
+func newName(oldName string, date time.Time, lat float64, long float64, extras string) string {
+	// TODO: Mudar pra retornar extensão original, em minúsculas
+	var name string
+	var tags string
+
+	strlat := strconv.FormatFloat(lat, 'f', 9, 64)
+	strlong := strconv.FormatFloat(long, 'f', 9, 64)
+
+	tags = findNameTags(oldName)
+	
+	name += date.Format("2006-01-02 03.04.05")
+	name += " (" + strlat + "," + strlong + ")"
+
+	if extras != "" {
+		name += " " + extras
+	}
+
+	if tags != "" {
+		name += " -- " + tags
+	}
+
+	return name
+}
+
+// Returns true if a dir/file already exists
+func Exists(filepath string) bool {
+	_, err := os.Stat(filepath)
+
+	if err != nil && os.IsNotExist(err) {
+		return false
+	} else {
+		return true
+	}
+}
+
+// Creates the full path from a directory path and filename, and then check if Exists
+func isCollision(dir string, filename string) bool {
+	path := dir + "/" + filename
+	return Exists(path)
+}
+
+// Generates the entire new path based on all the data, checks for collisions (and rename if needed)
+func newPath(archive string, oldName string, date time.Time, lat float64, long float64) string {
+	dir := fmt.Sprintf("%s/%d/%d", archive, date.Year(), date.Month())
+	createDir(dir)
+	
+	var index int64 = 0
+
+	filename := newName(oldName, date, lat, long, "foto" + strconv.FormatInt(index, 10))
+
+	for {
+		index++
+		if index > 100 { log.Fatal("index louco"); os.Exit(1) }
+		filename = newName(oldName, date, lat, long, "foto" + strconv.FormatInt(index, 10))
+
+		if !isCollision(dir, filename) {
+			break
+		}
+	}
+	
+	return fmt.Sprintf("%s/%d/%d/%s", archive, date.Year(), date.Month(), filename)
+}
+
+// Creates a directory if it doesn't exist yet
+func createDir(dir string) {
+	if !Exists(dir) {
+		os.MkdirAll(dir, 0644)
+	}
+}
